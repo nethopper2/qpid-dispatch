@@ -34,6 +34,7 @@
 
 #include <inttypes.h>
 #include <stdio.h>
+#include <sys/time.h>
 
 // maximum amount of bytes to read from TCP client before backpressure
 // activates.  Note that the actual number of read bytes may exceed this value
@@ -96,6 +97,7 @@ struct qdr_tcp_connection_t {
     uint64_t              opened_time;
     uint64_t              last_in_time;
     uint64_t              last_out_time;
+    uint64_t              latency_start_time;
 
     qd_message_stream_data_t *previous_stream_data; // previous segment (received in full)
     qd_message_stream_data_t *outgoing_stream_data; // current segment
@@ -243,6 +245,13 @@ void qdr_tcp_q2_unblocked_handler(const qd_alloc_safe_ptr_t context)
     UNLOCK(tc->activation_lock);
 }
 
+static uint64_t now_in_usec(void)
+{
+    struct timeval tv;
+    gettimeofday(&tv, 0);
+    return tv.tv_usec + 1000000 * tv.tv_sec;
+}
+
 // Extract buffers and their bytes from raw connection.
 // * Add received byte count to connection stats
 // * Return the count of bytes in the buffers list
@@ -364,6 +373,13 @@ static int handle_incoming(qdr_tcp_connection_t *conn, const char *msg)
         // set up message q2 unblocked callback handler
         qd_alloc_safe_ptr_t conn_sp = QD_SAFE_PTR_INIT(conn);
         qd_message_set_q2_unblocked_handler(msg, qdr_tcp_q2_unblocked_handler, conn_sp);
+
+        if (conn->ingress) {
+            //
+            // Start latency timer for this cross-van connection.
+            //
+            conn->latency_start_time = now_in_usec();
+        }
 
         conn->instream = qdr_link_deliver(conn->incoming, msg, 0, false, 0, 0, 0, 0);
 
@@ -1279,13 +1295,15 @@ qd_error_t qd_entity_refresh_tcpListener(qd_entity_t* entity, void *impl)
     uint64_t bo = listener->config->bytes_out;
     uint64_t co = listener->config->connections_opened;
     uint64_t cc = listener->config->connections_closed;
+    uint32_t ll = listener->config->last_latency_usec;
     UNLOCK(listener->config->stats_lock);
 
 
     if (   qd_entity_set_long(entity, "bytesIn",           bi) == 0
         && qd_entity_set_long(entity, "bytesOut",          bo) == 0
         && qd_entity_set_long(entity, "connectionsOpened", co) == 0
-        && qd_entity_set_long(entity, "connectionsClosed", cc) == 0)
+        && qd_entity_set_long(entity, "connectionsClosed", cc) == 0
+        && qd_entity_set_long(entity, "lastLatencyuSec",   ll) == 0)
     {
         return QD_ERROR_NONE;
     }
@@ -1543,7 +1561,14 @@ static uint64_t qdr_tcp_deliver(void *context, qdr_link_t *link, qdr_delivery_t 
         } else if (!tc->outstream) {
             tc->outstream = delivery;
             qdr_delivery_incref(delivery, "tcp_adaptor - new outstream");
-            if (!tc->ingress) {
+            if (tc->ingress) {
+                //
+                // Stop latency timer for this cross-van connection and record the results in the
+                // bridge structure.
+                //
+                uint32_t latency = (uint32_t) (now_in_usec() - tc->latency_start_time);
+                tc->bridge->last_latency_usec = latency;
+            } else {
                 //on egress, can only set up link for the reverse
                 //direction once we receive the first part of the
                 //message from client to server

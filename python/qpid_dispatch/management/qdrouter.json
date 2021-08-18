@@ -1299,6 +1299,11 @@
                     "type": "integer",
                     "graph": true,
                     "description": "The number of bytes sent from servers to clients on all connections to this listener."
+                },
+                "lastLatencyuSec": {
+                    "type": "integer",
+                    "graph": true,
+                    "description": "The connection-setup latency of the most recent connection from this listener."
                 }
             }
         },

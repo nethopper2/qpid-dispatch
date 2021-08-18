@@ -57,6 +57,7 @@ struct qd_tcp_bridge_t
     uint64_t      connections_closed;
     uint64_t      bytes_in;
     uint64_t      bytes_out;
+    uint32_t      last_latency_usec;
 };
 
 DEQ_DECLARE(qd_tcp_bridge_t, qd_bridge_config_list_t);
