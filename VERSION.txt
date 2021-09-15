@@ -1,1 +1,1 @@
-1.17.0-nethopper-1.1
+1.17.0-nethopper-1.2
